@@ -18,14 +18,14 @@ pipeline {
     }
     
     stages {
-        stage('Checkout Code') {
-            steps {
-                echo "📥 Checking out .NET WebAPI from GitHub..."
-                git branch: 'main', url: 'https://github.com/nurhad/mywebapi.git'
+        // stage('Checkout Code') {
+        //     steps {
+        //         echo "📥 Checking out .NET WebAPI from GitHub..."
+        //         git branch: 'main', url: 'https://github.com/nurhad/mywebapi.git'
                 
-                sh 'echo "📂 Repository contents:" && ls -la'
-            }
-        }
+        //         sh 'echo "📂 Repository contents:" && ls -la'
+        //     }
+        // }
         
         stage('Build .NET Application') {
             steps {
