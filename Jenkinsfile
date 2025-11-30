@@ -61,23 +61,11 @@ pipeline {
                 echo "🐳 Building Docker image with Podman..."
                 sh """
                 # Build container image
-                podman build -t ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER} .
-                podman build -t ${REGISTRY}/${IMAGE_NAME}:latest .
+                podman build -t ${IMAGE_NAME}:${env.BUILD_NUMBER} .
+                podman build -t ${IMAGE_NAME}:latest .
                 
                 echo "✅ Container images built:"
                 podman images | grep ${IMAGE_NAME}
-                """
-            }
-        }
-        
-        stage('Push to Registry') {
-            steps {
-                echo "📤 Pushing to container registry..."
-                sh """
-                # Push to local registry
-                podman push ${REGISTRY}/${IMAGE_NAME}:latest
-                
-                echo "✅ Image pushed to registry: ${REGISTRY}/${IMAGE_NAME}:latest"
                 """
             }
         }
@@ -86,8 +74,8 @@ pipeline {
             steps {
                 echo "🚀 Deploying to Kubernetes..."
                 sh """
-                # Update deployment with new image tag
-                sed -i 's|image:.*|image: ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}|g' k8s/deployment.yaml
+                # Update deployment dengan image local (tanpa registry)
+                sed -i 's|image:.*|image: ${IMAGE_NAME}:${env.BUILD_NUMBER}|g' k8s/deployment.yaml
                 
                 # Apply Kubernetes manifests
                 kubectl apply -f k8s/deployment.yaml
@@ -108,14 +96,14 @@ pipeline {
                 echo "🔍 Running smoke tests..."
                 sh """
                 # Wait for service to be ready
-                sleep 20
+                sleep 30
                 
                 # Test the application
                 echo "🧪 Testing application health endpoint..."
                 kubectl run smoke-test --image=curlimages/curl --rm -i --restart=Never -- \
-                  curl -s http://mywebapi-service/weatherforecast/health || echo "Health check completed"
+                  curl -s http://mywebapi-service/weatherforecast/health || echo "Health check attempted"
                 
-                echo "✅ Smoke tests passed!"
+                echo "✅ Smoke tests completed!"
                 """
             }
         }
