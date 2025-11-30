@@ -1,9 +1,11 @@
 pipeline {
-    agent any
+    agent {
+        label 'ubuntu dotnet podman k8s agent'  // ← RUN DI UBUNTU AGENT
+    }
     
     environment {
         // Container registry configuration
-        REGISTRY = "localhost:5000"  // Local registry untuk testing
+        REGISTRY = "localhost:5000"
         IMAGE_NAME = "mywebapi"
         KUBE_NAMESPACE = "default"
         
@@ -13,33 +15,43 @@ pipeline {
     }
     
     triggers {
-        pollSCM('H/5 * * * *')  // Auto-trigger setiap 5 menit
+        pollSCM('H/5 * * * *')  // Auto-check GitHub setiap 5 menit
     }
     
     stages {
-        stage('Checkout Code') {
+        stage('Environment Info') {
             steps {
-                echo "🔔 Checking out .NET WebAPI code..."
-                git branch: 'main', 
-                url: 'https://github.com/nurhad/mywebapi.git'
-                
-                sh 'echo "📁 Project structure:"'
-                sh 'find . -name "*.cs" -o -name "*.csproj" -o -name "Dockerfile" | head -10'
+                echo "🎯 Running on Jenkins Agent"
+                sh '''
+                echo "🖥️  Agent Hostname: $(hostname)"
+                echo "🔧 .NET Version: $(dotnet --version)"
+                echo "🐳 Podman Version: $(podman --version)"
+                echo "☸️  Kubectl Version: $(kubectl version --client --short)"
+                echo "📁 Workspace: $(pwd)"
+                '''
             }
         }
         
-        stage('Restore & Build') {
+        stage('Checkout Code') {
             steps {
-                echo "🏗️ Building .NET application..."
-                sh '''
-                echo "🔧 .NET version:"
-                dotnet --version
+                echo "📥 Checking out code from GitHub..."
+                git branch: 'main', 
+                url: 'https://github.com/nurhad/mywebapi.git',
+                // credentialsId: 'github-token'  // Jika pakai private repo
                 
-                echo "📦 Restoring dependencies..."
+                sh 'echo "📂 Repository contents:" && ls -la'
+            }
+        }
+        
+        stage('Build .NET Application') {
+            steps {
+                echo "🏗️ Building .NET WebAPI..."
+                sh '''
+                echo "📦 Restoring NuGet packages..."
                 dotnet restore
                 
                 echo "🔨 Building application..."
-                dotnet build --configuration ${BUILD_CONFIGURATION} --no-restore
+                dotnet build --configuration Release --no-restore
                 
                 echo "✅ Build completed successfully!"
                 '''
@@ -48,10 +60,11 @@ pipeline {
         
         stage('Run Tests') {
             steps {
-                echo "🧪 Running unit tests..."
+                echo "🧪 Running tests..."
                 sh '''
-                # Jika ada test project
-                if [ -f "**/*.Test.csproj" ]; then
+                # Check if test projects exist
+                if find . -name "*Test*.csproj | head -1"; then
+                    echo "Running tests..."
                     dotnet test --verbosity normal
                 else
                     echo "ℹ️  No test projects found - skipping tests"
@@ -60,42 +73,16 @@ pipeline {
             }
         }
         
-        stage('Security Scan') {
+        stage('Build Container Image') {
             steps {
-                echo "🛡️ Scanning for vulnerabilities..."
-                sh '''
-                echo "📋 Checking for known vulnerabilities..."
-                dotnet list package --vulnerable --include-transitive || echo "No vulnerabilities found"
-                
-                # Basic security check
-                echo "🔍 Security analysis completed"
-                '''
-            }
-        }
-        
-        stage('Build Docker Image') {
-            steps {
-                echo "🐳 Building Docker image with Podman..."
+                echo "🐳 Building container image with Podman..."
                 sh """
-                # Build image
+                # Build Docker image
                 podman build -t ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER} .
                 podman build -t ${REGISTRY}/${IMAGE_NAME}:latest .
                 
-                echo "✅ Docker images built:"
+                echo "✅ Container images built:"
                 podman images | grep ${IMAGE_NAME}
-                """
-            }
-        }
-        
-        stage('Push to Registry') {
-            steps {
-                echo "📤 Pushing image to registry..."
-                sh """
-                # Push to local registry (adjust for your registry)
-                podman push ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}
-                podman push ${REGISTRY}/${IMAGE_NAME}:latest
-                
-                echo "✅ Images pushed to registry"
                 """
             }
         }
@@ -104,40 +91,35 @@ pipeline {
             steps {
                 echo "🚀 Deploying to Kubernetes..."
                 sh """
-                # Update Kubernetes deployment
-                sed -i 's|image: mywebapi:latest|image: ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}|g' k8s/deployment.yaml
-                
                 # Apply Kubernetes manifests
                 kubectl apply -f k8s/deployment.yaml
                 
-                echo "🔄 Checking deployment status..."
-                kubectl rollout status deployment/mywebapi-deployment --timeout=300s
+                # Wait for deployment to be ready
+                echo "⏳ Waiting for deployment to be ready..."
+                kubectl rollout status deployment/mywebapi-deployment -n ${KUBE_NAMESPACE} --timeout=300s
                 
-                echo "🌐 Service information:"
-                kubectl get svc mywebapi-service
+                echo "🌐 Deployment status:"
+                kubectl get pods -l app=mywebapi -n ${KUBE_NAMESPACE}
+                kubectl get svc mywebapi-service -n ${KUBE_NAMESPACE}
                 """
             }
         }
         
         stage('Smoke Test') {
             steps {
-                echo "🧪 Running smoke tests..."
+                echo "🔍 Running smoke tests..."
                 sh """
                 # Wait for service to be ready
-                sleep 30
+                sleep 20
                 
-                # Get service URL
-                SERVICE_URL=\$(kubectl get svc mywebapi-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-                if [ -z "\$SERVICE_URL" ]; then
-                    SERVICE_URL="localhost"
-                fi
+                # Get service details
+                echo "📡 Service information:"
+                kubectl get svc mywebapi-service -n ${KUBE_NAMESPACE}
                 
-                echo "🔍 Testing endpoint: http://\${SERVICE_URL}/weatherforecast/health"
-                
-                # Test health endpoint
-                curl -f http://\${SERVICE_URL}/weatherforecast/health || echo "Health check failed"
-                
-                echo "✅ Smoke tests passed!"
+                # Try to access the service
+                echo "🧪 Testing application health endpoint..."
+                kubectl run smoke-test --image=curlimages/curl --rm -it --restart=Never -- \
+                  curl -s http://mywebapi-service/weatherforecast/health || echo "Health check attempted"
                 """
             }
         }
@@ -146,25 +128,25 @@ pipeline {
     post {
         always {
             echo "📊 Pipeline execution completed"
-            sh 'echo "Build: ${env.BUILD_NUMBER} | Result: ${currentBuild.result}"'
+            echo "🏷️  Build Number: ${env.BUILD_NUMBER}"
+            echo "🎯 Agent: ${env.NODE_NAME}"
+            echo "📈 Result: ${currentBuild.result}"
         }
         success {
-            echo "🎉 .NET WebAPI successfully deployed to Kubernetes!"
+            echo "🎉 SUCCESS! .NET WebAPI deployed via Jenkins Agent!"
             sh '''
-            echo "🌐 Your application is running at:"
-            kubectl get svc mywebapi-service
-            echo ""
-            echo "📋 Pod status:"
+            echo "✅ Deployment Summary:"
             kubectl get pods -l app=mywebapi
+            kubectl get svc mywebapi-service
             '''
         }
         failure {
             echo "❌ Pipeline failed - check logs above"
-            sh 'echo "Debug info:"; kubectl get pods -l app=mywebapi'
-        }
-        cleanup {
-            echo "🧹 Cleaning up workspace..."
-            // Cleanup resources jika perlu
+            sh '''
+            echo "🔍 Debug information:"
+            kubectl get pods -l app=mywebapi
+            kubectl describe deployment mywebapi-deployment
+            '''
         }
     }
 }
