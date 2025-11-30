@@ -61,11 +61,27 @@ pipeline {
                 echo "🐳 Building Docker image with Podman..."
                 sh """
                 # Build container image
-                podman build -t ${IMAGE_NAME}:${env.BUILD_NUMBER} .
-                podman build -t ${IMAGE_NAME}:latest .
+                podman build -t ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER} .
+                podman build -t ${REGISTRY}/${IMAGE_NAME}:latest .
                 
                 echo "✅ Container images built:"
                 podman images | grep ${IMAGE_NAME}
+                """
+            }
+        }
+        
+        stage('Push to Local Registry') {
+            steps {
+                echo "📤 Ensuring local registry is running..."
+                sh """
+                # Start local registry jika belum running
+                podman ps | grep registry || podman run -d -p 5000:5000 --name registry registry:2
+                sleep 5
+                
+                # Push images to registry
+                podman push ${REGISTRY}/${IMAGE_NAME}:latest
+                
+                echo "✅ Images pushed to local registry"
                 """
             }
         }
@@ -74,8 +90,11 @@ pipeline {
             steps {
                 echo "🚀 Deploying to Kubernetes..."
                 sh """
-                # Update deployment dengan image local
-                sed -i 's|image:.*|image: ${IMAGE_NAME}:${env.BUILD_NUMBER}|g' k8s/deployment.yaml
+                # Update deployment dengan image dari registry
+                sed -i 's|image:.*|image: ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}|g' k8s/deployment.yaml
+                
+                # Add imagePullPolicy untuk development
+                sed -i '/image:/a\\          imagePullPolicy: IfNotPresent' k8s/deployment.yaml
                 
                 # Apply Kubernetes manifests
                 kubectl apply -f k8s/deployment.yaml
@@ -91,8 +110,12 @@ pipeline {
             steps {
                 echo "⏳ Waiting for deployment to be ready..."
                 sh """
-                # Wait dengan timeout lebih lama dan continue meskipun timeout
-                timeout 300s kubectl rollout status deployment/mywebapi-deployment || echo "Rollout taking longer than expected - continuing..."
+                # Wait for deployment dengan retry logic
+                for i in {1..30}; do
+                    kubectl get pods -l app=mywebapi | grep -q Running && break
+                    echo "Waiting for pods to be ready... (\$i/30)"
+                    sleep 10
+                done
                 
                 echo "📊 Final deployment status:"
                 kubectl get pods -l app=mywebapi
@@ -106,7 +129,7 @@ pipeline {
                 echo "🔍 Running smoke tests..."
                 sh """
                 # Wait for service
-                sleep 30
+                sleep 10
                 
                 echo "🧪 Testing application..."
                 # Get service details
@@ -115,7 +138,7 @@ pipeline {
                 # Try to access the service
                 echo "Testing health endpoint..."
                 kubectl run smoke-test --image=curlimages/curl --rm -i --restart=Never -- \
-                  curl -s http://mywebapi-service/weatherforecast/health || echo "Health check attempted - service might still be starting"
+                  curl -s http://mywebapi-service/weatherforecast/health && echo "✅ Health check successful!" || echo "⚠️ Health check failed - service might still be starting"
                 
                 echo "✅ Smoke test completed!"
                 """
@@ -137,15 +160,6 @@ pipeline {
             kubectl get pods -l app=mywebapi
             kubectl get svc mywebapi-service
             echo "🚀 Application deployed successfully!"
-            '''
-        }
-        failure {
-            echo "⚠️  Pipeline completed with warnings - check deployment status"
-            sh '''
-            echo "🔍 Current status:"
-            kubectl get pods -l app=mywebapi
-            kubectl get svc mywebapi-service
-            kubectl describe deployment mywebapi-deployment
             '''
         }
     }
