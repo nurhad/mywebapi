@@ -14,19 +14,10 @@ pipeline {
     }
     
     triggers {
-        pollSCM('H/5 * * * *')  // Auto-check GitHub setiap 5 menit
+        pollSCM('H/5 * * * *')
     }
     
     stages {
-        // stage('Checkout Code') {
-        //     steps {
-        //         echo "📥 Checking out .NET WebAPI from GitHub..."
-        //         git branch: 'main', url: 'https://github.com/nurhad/mywebapi.git'
-                
-        //         sh 'echo "📂 Repository contents:" && ls -la'
-        //     }
-        // }
-        
         stage('Build .NET Application') {
             steps {
                 echo "🏗️ Building .NET WebAPI..."
@@ -34,6 +25,10 @@ pipeline {
                 echo "🔧 Environment:"
                 echo "Node: $NODE_NAME"
                 echo "Host: $(hostname)"
+                echo "Workspace: $(pwd)"
+                echo ""
+                echo "📂 Repository contents:"
+                ls -la
                 echo ""
                 echo "📦 Restoring dependencies..."
                 dotnet restore
@@ -51,7 +46,7 @@ pipeline {
                 echo "🧪 Running tests..."
                 sh '''
                 # Check if test projects exist
-                if find . -name "*Test*.csproj | head -1; then
+                if find . -name "*Test*.csproj" | head -1; then
                     echo "Running test suite..."
                     dotnet test --verbosity normal
                 else
@@ -143,11 +138,6 @@ pipeline {
         }
         failure {
             echo "❌ Pipeline failed - check logs above"
-            sh '''
-            echo "🔍 Debug information:"
-            kubectl get pods -l app=mywebapi
-            kubectl describe deployment/mywebapi-deployment
-            '''
         }
     }
 }
