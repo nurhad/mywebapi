@@ -18,6 +18,24 @@ pipeline {
     }
     
     stages {
+        stage('Configure Insecure Registry') {
+            steps {
+                echo "🔧 Configuring Podman for local registry..."
+                sh """
+                # Configure insecure registry untuk Podman
+                sudo mkdir -p /etc/containers
+                sudo tee /etc/containers/registries.conf << 'EOF'
+unqualified-search-registries = ["docker.io"]
+
+[[registry]]
+location = "localhost:5000"
+insecure = true
+EOF
+                echo "✅ Insecure registry configured"
+                """
+            }
+        }
+        
         stage('Build .NET Application') {
             steps {
                 echo "🏗️ Building .NET WebAPI..."
@@ -74,14 +92,21 @@ pipeline {
             steps {
                 echo "📤 Ensuring local registry is running..."
                 sh """
-                # Start local registry jika belum running
-                podman ps | grep registry || podman run -d -p 5000:5000 --name registry registry:2
+                # Stop existing registry jika ada
+                podman stop registry 2>/dev/null || true
+                podman rm registry 2>/dev/null || true
+                
+                # Start local registry dengan HTTP
+                podman run -d -p 5000:5000 --name registry registry:2
                 sleep 5
                 
-                # Push images to registry
-                podman push ${REGISTRY}/${IMAGE_NAME}:latest
+                # Push images to registry dengan --tls-verify=false
+                podman push --tls-verify=false ${REGISTRY}/${IMAGE_NAME}:latest
                 
                 echo "✅ Images pushed to local registry"
+                
+                # Verify push successful
+                curl -s http://localhost:5000/v2/_catalog
                 """
             }
         }
@@ -112,7 +137,10 @@ pipeline {
                 sh """
                 # Wait for deployment dengan retry logic
                 for i in {1..30}; do
-                    kubectl get pods -l app=mywebapi | grep -q Running && break
+                    if kubectl get pods -l app=mywebapi 2>/dev/null | grep -q Running; then
+                        echo "✅ Pods are running!"
+                        break
+                    fi
                     echo "Waiting for pods to be ready... (\$i/30)"
                     sleep 10
                 done
