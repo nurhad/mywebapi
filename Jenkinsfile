@@ -35,8 +35,7 @@ pipeline {
         stage('Checkout Code') {
             steps {
                 echo "📥 Checking out code from GitHub..."
-                git branch: 'main', 
-                url: 'https://github.com/nurhad/mywebapi.git',
+                git branch: 'main', url: 'https://github.com/nurhad/mywebapi.git',
                 // credentialsId: 'github-token'  // Jika pakai private repo
                 
                 sh 'echo "📂 Repository contents:" && ls -la'
