@@ -8,6 +8,7 @@ pipeline {
     environment {
         REGISTRY = "10.112.1.77:5000"
         IMAGE_NAME = "mywebapi"
+        KUBE_CONFIG = "/home/jenkins-agent/k3s.yaml"
         KUBE_NAMESPACE = "default"
         DOTNET_VERSION = "8.0"
         BUILD_CONFIGURATION = "Release"
@@ -60,11 +61,11 @@ pipeline {
             steps {
                 echo "🐳 Building Docker image with Podman..."
                 sh """
-                    # Build dengan tag yang KONSISTEN untuk registry
-                    podman build -t ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER} -t ${REGISTRY}/${IMAGE_NAME}:latest .
-                    
-                    echo "✅ Container images built:"
-                    podman images | grep ${IMAGE_NAME}
+                # Build dengan tag registry
+                podman build -t ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER} -t ${REGISTRY}/${IMAGE_NAME}:latest .
+                
+                echo "✅ Container images built:"
+                podman images | grep ${IMAGE_NAME}
                 """
             }
         }
@@ -73,37 +74,33 @@ pipeline {
             steps {
                 echo "📤 Ensuring local registry is running..."
                 sh """
-                    # Configure Podman to allow insecure registry
-                    echo "🔧 Configuring insecure registry..."
-                    sudo mkdir -p /etc/containers
-                    echo -e '[[registry]]\\nlocation = "10.112.1.77:5000"\\ninsecure = true' | sudo tee /etc/containers/registries.conf.d/insecure.conf
-                    
-                    # Check if registry container exists and is running
-                    if ! podman ps --format "table {{.Names}}" | grep -q registry; then
-                        echo "🚀 Starting registry container..."
-                        # Clean up any existing registry container first
-                        podman stop registry 2>/dev/null || echo "No running registry to stop"
-                        podman rm registry 2>/dev/null || echo "No registry container to remove"
-                        podman run -d -p 5000:5000 --name registry registry:2
-                        sleep 5
-                    else
-                        echo "✅ Registry container is already running"
-                    fi
-                    
-                    # Wait for registry to be ready
-                    echo "🔍 Verifying registry access..."
-                    until curl -s http://localhost:5000/v2/_catalog > /dev/null; do
-                        echo "Waiting for registry to be ready..."
-                        sleep 3
-                    done
-                    
-                    # Push images to local registry dengan --tls-verify=false
-                    echo "📤 Pushing images to registry..."
-                    podman push --tls-verify=false 10.112.1.77:5000/mywebapi:${env.BUILD_NUMBER}
-                    podman push --tls-verify=false 10.112.1.77:5000/mywebapi:latest
-                    
-                    echo "✅ Images pushed to local registry:"
-                    curl -s http://localhost:5000/v2/mywebapi/tags/list | jq . 2>/dev/null || curl -s http://localhost:5000/v2/mywebapi/tags/list
+                # Set KUBECONFIG environment variable
+                export KUBECONFIG=${KUBE_CONFIG}
+                
+                # Configure Podman untuk allow insecure registry
+                echo "🔧 Configuring insecure registry..."
+                mkdir -p /home/jenkins-agent/.config/containers
+                echo -e '[[registry]]\\nlocation = "10.112.1.77:5000"\\ninsecure = true' > /home/jenkins-agent/.config/containers/registries.conf
+                
+                # Start registry
+                podman stop registry 2>/dev/null || echo "No registry to stop"
+                podman rm registry 2>/dev/null || echo "No registry to remove"
+                podman run -d -p 5000:5000 --name registry registry:2
+                sleep 5
+                
+                # Verify registry
+                until curl -s http://localhost:5000/v2/_catalog > /dev/null; do
+                    echo "Waiting for registry..."
+                    sleep 2
+                done
+                
+                # Push images
+                echo "📤 Pushing images to registry..."
+                podman push ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}
+                podman push ${REGISTRY}/${IMAGE_NAME}:latest
+                
+                echo "✅ Images pushed:"
+                curl -s http://localhost:5000/v2/mywebapi/tags/list
                 """
             }
         }
@@ -112,15 +109,17 @@ pipeline {
             steps {
                 echo "🚀 Deploying to Kubernetes..."
                 sh """
-                    # Update deployment dengan image dari REGISTRY
-                    sed -i 's|image:.*|image: ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}|g' k8s/deployment.yaml
-                    
-                    # Apply Kubernetes manifests
-                    kubectl apply -f k8s/deployment.yaml
-                    
-                    echo "🌐 Deployment applied - checking status..."
-                    kubectl get pods -l app=mywebapi
-                    kubectl get svc mywebapi-service
+                # Set KUBECONFIG
+                export KUBECONFIG=${KUBE_CONFIG}
+                
+                # Update deployment
+                sed -i 's|image:.*|image: ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}|g' k8s/deployment.yaml
+                
+                # Apply manifests
+                kubectl apply -f k8s/deployment.yaml
+                
+                echo "🌐 Deployment status:"
+                kubectl get pods -l app=mywebapi
                 """
             }
         }
