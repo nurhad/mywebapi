@@ -17,27 +17,43 @@ spec:
       containers:
       - name: mywebapi
         image: 10.112.1.77:5000/mywebapi:latest  # ← Akan diganti Jenkins
-        imagePullPolicy: Always  # ⬅️ TAMBAHKAN INI
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
         env:
         - name: ASPNETCORE_ENVIRONMENT
           value: "Production"
+        - name: ASPNETCORE_URLS
+          value: "http://+:8080"
+        # Liveness Probe: untuk restart pod jika aplikasi crash
         livenessProbe:
           httpGet:
-            path: /weatherforecast/health
+            path: /weatherforecast
             port: 8080
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        # Readiness Probe: untuk menentukan kapan pod siap menerima traffic
+        readinessProbe:
+          httpGet:
+            path: /weatherforecast
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: mywebapi-service
 spec:
+  type: NodePort  # Ubah dari LoadBalancer ke NodePort untuk local
   selector:
     app: mywebapi
   ports:
   - port: 80
     targetPort: 8080
-  type: LoadBalancer
+    # nodePort: 30080  # Opsional: tentukan port khusus (30000-32767)
