@@ -80,7 +80,7 @@ pipeline {
                 # Configure Podman untuk allow insecure registry
                 echo "🔧 Configuring insecure registry..."
                 mkdir -p /home/jenkins-agent/.config/containers
-                echo -e '[[registry]]\\nlocation = "10.112.1.77:5000"\\ninsecure = true' > /home/jenkins-agent/.config/containers/registries.conf
+                echo -e '[registries.insecure]\nregistries = ["10.112.1.77:5000"]' > /home/jenkins-agent/.config/containers/registries.conf
                 
                 # Start registry
                 podman stop registry 2>/dev/null || echo "No registry to stop"
