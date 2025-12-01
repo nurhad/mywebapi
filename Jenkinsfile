@@ -60,12 +60,11 @@ pipeline {
             steps {
                 echo "🐳 Building Docker image with Podman..."
                 sh """
-                # Build container image
-                podman build -t ${IMAGE_NAME}:${env.BUILD_NUMBER} .
-                podman build -t ${IMAGE_NAME}:latest .
-                
-                echo "✅ Container images built:"
-                podman images | grep ${IMAGE_NAME}
+                    # Build dengan tag yang KONSISTEN untuk registry
+                    podman build -t ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER} -t ${REGISTRY}/${IMAGE_NAME}:latest .
+                    
+                    echo "✅ Container images built:"
+                    podman images | grep ${IMAGE_NAME}
                 """
             }
         }
@@ -74,27 +73,32 @@ pipeline {
             steps {
                 echo "📤 Ensuring local registry is running..."
                 sh """
-                # Check if registry container exists and is running
-                if podman ps --format "table {{.Names}}" | grep -q registry; then
-                    echo "✅ Registry container is already running"
-                else
-                    echo "🚀 Starting registry container..."
-                    # Clean up any existing registry container first
-                    podman stop registry 2>/dev/null || echo "No running registry to stop"
-                    podman rm registry 2>/dev/null || echo "No registry container to remove"
-                    podman run -d -p 5000:5000 --name registry registry:2
-                    sleep 5
-                fi
-                
-                # Verify registry is accessible
-                echo "🔍 Verifying registry access..."
-                curl -s http://localhost:5000/v2/_catalog || echo "Registry might still be starting..."
-                
-                # Push images to local registry
-                echo "📤 Pushing images to registry..."
-                podman push ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}
-                
-                echo "✅ Images pushed to local registry"
+                    # Check if registry container exists and is running
+                    if ! podman ps --format "table {{.Names}}" | grep -q registry; then
+                        echo "🚀 Starting registry container..."
+                        # Clean up any existing registry container first
+                        podman stop registry 2>/dev/null || echo "No running registry to stop"
+                        podman rm registry 2>/dev/null || echo "No registry container to remove"
+                        podman run -d -p 5000:5000 --name registry registry:2
+                        sleep 5
+                    else
+                        echo "✅ Registry container is already running"
+                    fi
+                    
+                    # Wait for registry to be ready
+                    echo "🔍 Verifying registry access..."
+                    until curl -s http://localhost:5000/v2/_catalog > /dev/null; do
+                        echo "Waiting for registry to be ready..."
+                        sleep 3
+                    done
+                    
+                    # Push images to local registry - gunakan tag yang SAMA dengan build
+                    echo "📤 Pushing images to registry..."
+                    podman push ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}
+                    podman push ${REGISTRY}/${IMAGE_NAME}:latest
+                    
+                    echo "✅ Images pushed to local registry:"
+                    curl -s http://localhost:5000/v2/mywebapi/tags/list | jq . 2>/dev/null || curl -s http://localhost:5000/v2/mywebapi/tags/list
                 """
             }
         }
@@ -103,15 +107,15 @@ pipeline {
             steps {
                 echo "🚀 Deploying to Kubernetes..."
                 sh """
-                # Update deployment dengan image local
-                sed -i 's|image:.*|image: ${IMAGE_NAME}:${env.BUILD_NUMBER}|g' k8s/deployment.yaml
-                
-                # Apply Kubernetes manifests
-                kubectl apply -f k8s/deployment.yaml
-                
-                echo "🌐 Deployment applied - checking status..."
-                kubectl get pods -l app=mywebapi
-                kubectl get svc mywebapi-service
+                    # Update deployment dengan image dari REGISTRY
+                    sed -i 's|image:.*|image: ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}|g' k8s/deployment.yaml
+                    
+                    # Apply Kubernetes manifests
+                    kubectl apply -f k8s/deployment.yaml
+                    
+                    echo "🌐 Deployment applied - checking status..."
+                    kubectl get pods -l app=mywebapi
+                    kubectl get svc mywebapi-service
                 """
             }
         }
