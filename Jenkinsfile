@@ -8,7 +8,6 @@ pipeline {
     environment {
         REGISTRY = "10.112.1.77:5000"
         IMAGE_NAME = "mywebapi"
-        KUBE_CONFIG = "/home/jenkins-agent/k3s.yaml"
         KUBE_NAMESPACE = "default"
         DOTNET_VERSION = "8.0"
         BUILD_CONFIGURATION = "Release"
@@ -74,8 +73,6 @@ pipeline {
             steps {
                 echo "📤 Ensuring local registry is running..."
                 sh """
-                # Set KUBECONFIG environment variable
-                export KUBECONFIG=${KUBE_CONFIG}
                 
                 # Configure Podman untuk allow insecure registry
                 echo "🔧 Configuring insecure registry..."
@@ -109,8 +106,6 @@ pipeline {
             steps {
                 echo "🚀 Deploying to Kubernetes..."
                 sh """
-                # Set KUBECONFIG
-                export KUBECONFIG=${KUBE_CONFIG}
                 
                 # Update deployment
                 sed -i 's|image:.*|image: ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}|g' k8s/deployment.yaml
