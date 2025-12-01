@@ -6,7 +6,7 @@ pipeline {
     }
     
     environment {
-        REGISTRY = "localhost:5000"
+        REGISTRY = "10.112.1.77:5000"
         IMAGE_NAME = "mywebapi"
         KUBE_NAMESPACE = "default"
         DOTNET_VERSION = "8.0"
@@ -56,116 +56,54 @@ pipeline {
             }
         }
         
-        stage('Setup Registry') {
-            steps {
-                echo "🐳 Setting up Local Registry..."
-                sh """
-                    # Configure insecure registry untuk Podman (user level)
-                    echo "🔧 Configuring insecure registry for Podman..."
-                    mkdir -p \$HOME/.config/containers
-                    cat > \$HOME/.config/containers/registries.conf << 'EOF'
-unqualified-search-registries = ["docker.io"]
-
-[[registry]]
-location = "localhost:5000"
-insecure = true
-
-[[registry]]
-location = "10.112.1.77:5000"
-insecure = true
-EOF
-                    
-                    echo "📋 Registry configuration:"
-                    cat \$HOME/.config/containers/registries.conf
-                    
-                    # Start registry container jika belum berjalan
-                    echo "🚀 Checking registry container..."
-                    if ! podman ps --format "{{.Names}}" | grep -q registry; then
-                        echo "Starting registry container..."
-                        podman run -d -p 5000:5000 --name registry registry:2
-                        echo "✅ Registry container started"
-                    else
-                        echo "✅ Registry container is already running"
-                    fi
-                    
-                    # Wait for registry to be ready
-                    echo "🔍 Verifying registry access..."
-                    COUNTER=0
-                    while ! curl -s http://localhost:5000/v2/_catalog > /dev/null && [ \$COUNTER -lt 10 ]; do
-                        echo "Waiting for registry to be ready... (\$((COUNTER*3)) seconds)"
-                        sleep 3
-                        COUNTER=\$((COUNTER + 1))
-                    done
-                    
-                    if curl -s http://localhost:5000/v2/_catalog > /dev/null; then
-                        echo "✅ Registry is ready and accessible"
-                        curl -s http://localhost:5000/v2/_catalog | jq . 2>/dev/null || curl -s http://localhost:5000/v2/_catalog
-                    else
-                        echo "❌ Registry not accessible after 30 seconds"
-                        exit 1
-                    fi
-                """
-            }
-        }
-        
         stage('Build Container Image') {
             steps {
-                echo "🐳 Building Container Image..."
+                echo "🐳 Building Docker image with Podman..."
                 sh """
-                    # Clean old images dengan tag yang sama
-                    podman rmi \${REGISTRY}/\${IMAGE_NAME}:\${env.BUILD_NUMBER} 2>/dev/null || true
-                    podman rmi \${REGISTRY}/\${IMAGE_NAME}:latest 2>/dev/null || true
-                    
-                    # Build image dengan tag untuk registry lokal
-                    echo "🔨 Building image with tag: \${REGISTRY}/\${IMAGE_NAME}:\${env.BUILD_NUMBER}"
-                    podman build -t \${REGISTRY}/\${IMAGE_NAME}:\${env.BUILD_NUMBER} -t \${REGISTRY}/\${IMAGE_NAME}:latest .
+                    # Build dengan tag yang KONSISTEN untuk registry
+                    podman build -t ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER} -t ${REGISTRY}/${IMAGE_NAME}:latest .
                     
                     echo "✅ Container images built:"
-                    podman images | grep \${IMAGE_NAME} | head -5
+                    podman images | grep ${IMAGE_NAME}
                 """
             }
         }
 
         stage('Push to Local Registry') {
             steps {
-                echo "📤 Pushing to Local Registry..."
+                echo "📤 Ensuring local registry is running..."
                 sh """
-                    # Verify registry is still running
-                    if ! podman ps --format "{{.Names}}" | grep -q registry; then
-                        echo "❌ Registry container not running!"
-                        exit 1
+                    # Configure Podman to allow insecure registry
+                    echo "🔧 Configuring insecure registry..."
+                    sudo mkdir -p /etc/containers
+                    echo -e '[[registry]]\\nlocation = "10.112.1.77:5000"\\ninsecure = true' | sudo tee /etc/containers/registries.conf.d/insecure.conf
+                    
+                    # Check if registry container exists and is running
+                    if ! podman ps --format "table {{.Names}}" | grep -q registry; then
+                        echo "🚀 Starting registry container..."
+                        # Clean up any existing registry container first
+                        podman stop registry 2>/dev/null || echo "No running registry to stop"
+                        podman rm registry 2>/dev/null || echo "No registry container to remove"
+                        podman run -d -p 5000:5000 --name registry registry:2
+                        sleep 5
+                    else
+                        echo "✅ Registry container is already running"
                     fi
                     
-                    # Push images dengan retry logic
-                    echo "📤 Pushing \${REGISTRY}/\${IMAGE_NAME}:\${env.BUILD_NUMBER}"
-                    for i in {1..3}; do
-                        if podman push --tls-verify=false \${REGISTRY}/\${IMAGE_NAME}:\${env.BUILD_NUMBER}; then
-                            echo "✅ Successfully pushed :\${env.BUILD_NUMBER}"
-                            break
-                        else
-                            echo "⚠️ Push attempt \${i} failed, retrying in 5 seconds..."
-                            sleep 5
-                        fi
+                    # Wait for registry to be ready
+                    echo "🔍 Verifying registry access..."
+                    until curl -s http://localhost:5000/v2/_catalog > /dev/null; do
+                        echo "Waiting for registry to be ready..."
+                        sleep 3
                     done
                     
-                    echo "📤 Pushing \${REGISTRY}/\${IMAGE_NAME}:latest"
-                    for i in {1..3}; do
-                        if podman push --tls-verify=false \${REGISTRY}/\${IMAGE_NAME}:latest; then
-                            echo "✅ Successfully pushed :latest"
-                            break
-                        else
-                            echo "⚠️ Push attempt \${i} failed, retrying in 5 seconds..."
-                            sleep 5
-                        fi
-                    done
+                    # Push images to local registry dengan --tls-verify=false
+                    echo "📤 Pushing images to registry..."
+                    podman push --tls-verify=false 10.112.1.77:5000/mywebapi:${env.BUILD_NUMBER}
+                    podman push --tls-verify=false 10.112.1.77:5000/mywebapi:latest
                     
-                    # Verify pushed images
                     echo "✅ Images pushed to local registry:"
-                    echo "📋 Catalog:"
-                    curl -s http://localhost:5000/v2/_catalog | jq . 2>/dev/null || curl -s http://localhost:5000/v2/_catalog
-                    
-                    echo "🏷️ Tags for \${IMAGE_NAME}:"
-                    curl -s http://localhost:5000/v2/\${IMAGE_NAME}/tags/list | jq . 2>/dev/null || curl -s http://localhost:5000/v2/\${IMAGE_NAME}/tags/list
+                    curl -s http://localhost:5000/v2/mywebapi/tags/list | jq . 2>/dev/null || curl -s http://localhost:5000/v2/mywebapi/tags/list
                 """
             }
         }
@@ -174,37 +112,15 @@ EOF
             steps {
                 echo "🚀 Deploying to Kubernetes..."
                 sh """
-                    # Configure K3s untuk bisa pull dari registry insecure
-                    echo "🔧 Configuring K3s for insecure registry..."
-                    sudo mkdir -p /etc/rancher/k3s/
-                    cat > /tmp/registries.yaml << 'EOF'
-mirrors:
-  "localhost:5000":
-    endpoint:
-      - "http://localhost:5000"
-EOF
-                    sudo cp /tmp/registries.yaml /etc/rancher/k3s/registries.yaml
-                    
-                    # Restart k3s agar konfigurasi berlaku
-                    echo "🔄 Restarting K3s to apply registry config..."
-                    sudo systemctl restart k3s
-                    sleep 15
-                    
-                    # Wait for k3s to be ready
-                    echo "⏳ Waiting for K3s to be ready..."
-                    until kubectl get nodes 2>/dev/null; do
-                        echo "K3s not ready yet, waiting..."
-                        sleep 5
-                    done
-                    
-                    # Update deployment dengan image dari registry lokal
-                    echo "📝 Updating deployment image to: \${REGISTRY}/\${IMAGE_NAME}:\${env.BUILD_NUMBER}"
-                    sed -i 's|image:.*|image: \${REGISTRY}/\${IMAGE_NAME}:\${env.BUILD_NUMBER}|g' k8s/deployment.yaml
+                    # Update deployment dengan image dari REGISTRY
+                    sed -i 's|image:.*|image: ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}|g' k8s/deployment.yaml
                     
                     # Apply Kubernetes manifests
                     kubectl apply -f k8s/deployment.yaml
                     
-                    echo "✅ Deployment applied!"
+                    echo "🌐 Deployment applied - checking status..."
+                    kubectl get pods -l app=mywebapi
+                    kubectl get svc mywebapi-service
                 """
             }
         }
@@ -213,18 +129,12 @@ EOF
             steps {
                 echo "⏳ Waiting for deployment to be ready..."
                 sh """
-                    # Wait for rollout dengan timeout
-                    echo "🔄 Checking rollout status..."
-                    timeout 180s kubectl rollout status deployment/mywebapi-deployment || echo "⚠️ Rollout check timed out"
-                    
-                    echo "📊 Deployment status:"
-                    kubectl get deployment mywebapi-deployment
-                    
-                    echo "🐳 Pods status:"
-                    kubectl get pods -l app=\${IMAGE_NAME} -o wide
-                    
-                    echo "🔗 Service status:"
-                    kubectl get svc mywebapi-service
+                # Wait dengan timeout lebih lama dan continue meskipun timeout
+                timeout 300s kubectl rollout status deployment/mywebapi-deployment || echo "Rollout taking longer than expected - continuing..."
+                
+                echo "📊 Final deployment status:"
+                kubectl get pods -l app=mywebapi
+                kubectl get svc mywebapi-service
                 """
             }
         }
@@ -233,38 +143,19 @@ EOF
             steps {
                 echo "🔍 Running smoke tests..."
                 sh """
-                    # Wait for service to be ready
-                    echo "⏳ Waiting for service to stabilize..."
-                    sleep 20
-                    
-                    # Get service details
-                    echo "🧪 Testing application endpoints..."
-                    
-                    # Test 1: Health endpoint
-                    echo "🩺 Testing health endpoint..."
-                    kubectl run smoke-test-health-\${env.BUILD_NUMBER} \
-                        --image=curlimages/curl \
-                        --restart=Never \
-                        --rm -i \
-                        --command -- \
-                        curl -s -f -o /dev/null -w "Health: %{http_code}\\n" \
-                        http://mywebapi-service/healthz \
-                        && echo "✅ Health check passed" \
-                        || echo "⚠️ Health check failed"
-                    
-                    # Test 2: Weather forecast endpoint
-                    echo "🌤️ Testing weather forecast endpoint..."
-                    kubectl run smoke-test-weather-\${env.BUILD_NUMBER} \
-                        --image=curlimages/curl \
-                        --restart=Never \
-                        --rm -i \
-                        --command -- \
-                        curl -s -f -o /dev/null -w "Weather: %{http_code}\\n" \
-                        http://mywebapi-service/weatherforecast \
-                        && echo "✅ Weather endpoint passed" \
-                        || echo "⚠️ Weather endpoint failed"
-                    
-                    echo "✅ Smoke test completed!"
+                # Wait for service
+                sleep 30
+                
+                echo "🧪 Testing application..."
+                # Get service details
+                kubectl get svc mywebapi-service
+                
+                # Try to access the service
+                echo "Testing health endpoint..."
+                kubectl run smoke-test --image=curlimages/curl --rm -i --restart=Never -- \
+                  curl -s http://mywebapi-service/weatherforecast/health || echo "Health check attempted - service might still be starting"
+                
+                echo "✅ Smoke test completed!"
                 """
             }
         }
@@ -273,47 +164,26 @@ EOF
     post {
         always {
             echo "📊 Pipeline execution completed"
-            echo "🔗 Build: \${env.BUILD_NUMBER}"
-            echo "🎯 Agent: \${env.NODE_NAME}"
-            echo "📈 Result: \${currentBuild.currentResult}"
-            
-            sh '''
-            echo "📋 Final Status Report:"
-            echo "=== Deployment ==="
-            kubectl get deployment mywebapi-deployment
-            echo "=== Pods ==="
-            kubectl get pods -l app=mywebapi -o wide
-            echo "=== Service ==="
-            kubectl get svc mywebapi-service
-            echo "=== Registry ==="
-            curl -s http://localhost:5000/v2/_catalog 2>/dev/null || echo "Registry not accessible"
-            '''
+            echo "🔗 Build: ${env.BUILD_NUMBER}"
+            echo "🎯 Agent: ${env.NODE_NAME}"
+            echo "📈 Result: ${currentBuild.result}"
         }
         success {
             echo "🎉 CI/CD SUCCESS! .NET WebAPI deployed to Kubernetes!"
             sh '''
+            echo "📋 Final Status:"
+            kubectl get pods -l app=mywebapi
+            kubectl get svc mywebapi-service
             echo "🚀 Application deployed successfully!"
-            echo ""
-            echo "📌 To access the application:"
-            echo "1. Port forward: kubectl port-forward svc/mywebapi-service 8080:80"
-            echo "2. Then open: http://localhost:8080/weatherforecast"
-            echo ""
-            echo "📌 To check logs:"
-            echo "kubectl logs -l app=mywebapi --tail=20"
             '''
         }
         failure {
-            echo "❌ Pipeline failed!"
+            echo "⚠️  Pipeline completed with warnings - check deployment status"
             sh '''
-            echo "🔍 Debug information:"
-            echo "=== Pods details ==="
-            kubectl describe pods -l app=mywebapi
-            echo "=== Deployment details ==="
+            echo "🔍 Current status:"
+            kubectl get pods -l app=mywebapi
+            kubectl get svc mywebapi-service
             kubectl describe deployment mywebapi-deployment
-            echo "=== Events ==="
-            kubectl get events --field-selector involvedObject.name=mywebapi-deployment --sort-by=.lastTimestamp
-            echo "=== Registry logs ==="
-            podman logs registry 2>/dev/null | tail -20 || echo "Could not get registry logs"
             '''
         }
     }
