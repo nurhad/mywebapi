@@ -73,6 +73,11 @@ pipeline {
             steps {
                 echo "📤 Ensuring local registry is running..."
                 sh """
+                    # Configure Podman to allow insecure registry
+                    echo "🔧 Configuring insecure registry..."
+                    sudo mkdir -p /etc/containers
+                    echo -e '[[registry]]\\nlocation = "10.112.1.77:5000"\\ninsecure = true' | sudo tee /etc/containers/registries.conf.d/insecure.conf
+                    
                     # Check if registry container exists and is running
                     if ! podman ps --format "table {{.Names}}" | grep -q registry; then
                         echo "🚀 Starting registry container..."
@@ -92,10 +97,10 @@ pipeline {
                         sleep 3
                     done
                     
-                    # Push images to local registry - gunakan tag yang SAMA dengan build
+                    # Push images to local registry dengan --tls-verify=false
                     echo "📤 Pushing images to registry..."
-                    podman push ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}
-                    podman push ${REGISTRY}/${IMAGE_NAME}:latest
+                    podman push --tls-verify=false 10.112.1.77:5000/mywebapi:${env.BUILD_NUMBER}
+                    podman push --tls-verify=false 10.112.1.77:5000/mywebapi:latest
                     
                     echo "✅ Images pushed to local registry:"
                     curl -s http://localhost:5000/v2/mywebapi/tags/list | jq . 2>/dev/null || curl -s http://localhost:5000/v2/mywebapi/tags/list
