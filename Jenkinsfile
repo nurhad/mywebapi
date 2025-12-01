@@ -72,14 +72,27 @@ pipeline {
 
         stage('Push to Local Registry') {
             steps {
-                echo "📤 Setting up local registry..."
+                echo "📤 Ensuring local registry is running..."
                 sh """
-                # Start local registry jika belum running
-                podman ps | grep registry || podman run -d -p 5000:5000 --name registry registry:2
-                sleep 5
+                # Check if registry container exists and is running
+                if podman ps --format "table {{.Names}}" | grep -q registry; then
+                    echo "✅ Registry container is already running"
+                else
+                    echo "🚀 Starting registry container..."
+                    # Clean up any existing registry container first
+                    podman stop registry 2>/dev/null || echo "No running registry to stop"
+                    podman rm registry 2>/dev/null || echo "No registry container to remove"
+                    podman run -d -p 5000:5000 --name registry registry:2
+                    sleep 5
+                fi
+                
+                # Verify registry is accessible
+                echo "🔍 Verifying registry access..."
+                curl -s http://localhost:5000/v2/_catalog || echo "Registry might still be starting..."
                 
                 # Push images to local registry
-                podman push localhost:5000/mywebapi:${env.BUILD_NUMBER}
+                echo "📤 Pushing images to registry..."
+                podman push ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}
                 
                 echo "✅ Images pushed to local registry"
                 """
