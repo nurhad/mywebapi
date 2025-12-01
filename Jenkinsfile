@@ -73,10 +73,10 @@ pipeline {
             steps {
                 echo "📤 Ensuring local registry is running..."
                 sh """
-                    # Configure Podman to allow insecure registry
+                    # Configure Podman to use local registry config
                     echo "🔧 Configuring insecure registry..."
-                    sudo mkdir -p /etc/containers
-                    echo -e '[[registry]]\\nlocation = "10.112.1.77:5000"\\ninsecure = true' | sudo tee /etc/containers/registries.conf.d/insecure.conf
+                    mkdir -p \$HOME/.config/containers/registries.conf.d
+                    echo -e '[[registry]]\\nlocation = "10.112.1.77:5000"\\ninsecure = true' > \$HOME/.config/containers/registries.conf.d/insecure.conf
                     
                     # Check if registry container exists and is running
                     if ! podman ps --format "table {{.Names}}" | grep -q registry; then
@@ -85,25 +85,33 @@ pipeline {
                         podman stop registry 2>/dev/null || echo "No running registry to stop"
                         podman rm registry 2>/dev/null || echo "No registry container to remove"
                         podman run -d -p 5000:5000 --name registry registry:2
-                        sleep 5
+                        sleep 10
                     else
                         echo "✅ Registry container is already running"
                     fi
                     
                     # Wait for registry to be ready
                     echo "🔍 Verifying registry access..."
-                    until curl -s http://localhost:5000/v2/_catalog > /dev/null; do
-                        echo "Waiting for registry to be ready..."
+                    COUNTER=0
+                    until curl -s http://localhost:5000/v2/_catalog > /dev/null || [ \$COUNTER -eq 10 ]; do
+                        echo "Waiting for registry to be ready... (\$((COUNTER*3)) seconds)"
                         sleep 3
+                        COUNTER=\$((COUNTER + 1))
                     done
                     
-                    # Push images to local registry dengan --tls-verify=false
-                    echo "📤 Pushing images to registry..."
-                    podman push --tls-verify=false 10.112.1.77:5000/mywebapi:${env.BUILD_NUMBER}
-                    podman push --tls-verify=false 10.112.1.77:5000/mywebapi:latest
-                    
-                    echo "✅ Images pushed to local registry:"
-                    curl -s http://localhost:5000/v2/mywebapi/tags/list | jq . 2>/dev/null || curl -s http://localhost:5000/v2/mywebapi/tags/list
+                    # Check if registry is accessible
+                    if curl -s http://localhost:5000/v2/_catalog > /dev/null; then
+                        echo "✅ Registry is ready!"
+                        # Push images to local registry
+                        echo "📤 Pushing images to registry..."
+                        podman push --tls-verify=false ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}
+                        podman push --tls-verify=false ${REGISTRY}/${IMAGE_NAME}:latest
+                        
+                        echo "✅ Images pushed to local registry:"
+                        curl -s http://localhost:5000/v2/${IMAGE_NAME}/tags/list || echo "Could not fetch tags list"
+                    else
+                        echo "⚠️  Registry not accessible - skipping push"
+                    fi
                 """
             }
         }
