@@ -69,6 +69,22 @@ pipeline {
                 """
             }
         }
+
+        stage('Push to Local Registry') {
+            steps {
+                echo "📤 Setting up local registry..."
+                sh """
+                # Start local registry jika belum running
+                podman ps | grep registry || podman run -d -p 5000:5000 --name registry registry:2
+                sleep 5
+                
+                # Push images to local registry
+                podman push localhost:5000/mywebapi:${env.BUILD_NUMBER}
+                
+                echo "✅ Images pushed to local registry"
+                """
+            }
+        }
         
         stage('Deploy to Kubernetes') {
             steps {
