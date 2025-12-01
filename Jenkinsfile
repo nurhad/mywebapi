@@ -6,7 +6,7 @@ pipeline {
     }
     
     environment {
-        REGISTRY = "localhost:5000"
+        REGISTRY = "10.112.1.77:5000"
         IMAGE_NAME = "mywebapi"
         KUBE_NAMESPACE = "default"
         DOTNET_VERSION = "8.0"

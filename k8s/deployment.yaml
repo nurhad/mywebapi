@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: mywebapi
-        image: localhost:5000/mywebapi:latest  # ← Akan diganti Jenkins
+        image: 10.112.1.77:5000/mywebapi:latest  # ← Akan diganti Jenkins
         imagePullPolicy: Always  # ⬅️ TAMBAHKAN INI
         ports:
         - containerPort: 8080
