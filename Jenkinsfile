@@ -11,6 +11,8 @@ pipeline {
         KUBE_NAMESPACE = "default"
         DOTNET_VERSION = "8.0"
         BUILD_CONFIGURATION = "Release"
+        CONTAINER_PORT = "80"
+        SERVICE_PORT = "80"
     }
     
     triggers {
