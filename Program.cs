@@ -18,8 +18,8 @@ app.UseHttpsRedirection();
 
 var summaries = new[]
 {
-    // "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-    "Membeku", "Menyegarkan", "Dingin", "Sejuk", "Hangat sedang", "Hangat", "Teduh", "Panas", "Terik", "Membakar"
+    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
+    // "Membeku", "Menyegarkan", "Dingin", "Sejuk", "Hangat sedang", "Hangat", "Teduh", "Panas", "Terik", "Membakar"
 };
 
 app.MapGet("/weatherforecast", () =>
